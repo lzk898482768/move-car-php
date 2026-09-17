@@ -89,9 +89,11 @@ NF=$(curl -s -X POST -H "Content-Type: application/json" -d '{"channel":"sms"}' 
 echo "  $NF"
 echo "$NF" | grep -q "channel_unavailable" && pass "未开通通道被拒" || fail "notify" "$NF"
 
-echo "=== 14. 本地二维码图片 ==="
-curl -s -o storage/tmp/qr.png -w "  qr http=%{http_code} bytes=%{size_download}\n" "$B/qr.php?text=https://example.com/move?c=qr_x&size=240"
-[ -s storage/tmp/qr.png ] && pass "二维码本地生成" || fail "qr png" "empty"
+echo "=== 14. 本地二维码（SVG，无 GD 也可）==="
+curl -s -D storage/tmp/qr.h -o storage/tmp/qr.svg -w "  qr http=%{http_code} bytes=%{size_download}\n" "$B/qr.php?text=https://example.com/move?c=qr_x&size=240"
+[ -s storage/tmp/qr.svg ] && pass "二维码本地生成" || fail "qr svg" "empty"
+grep -qi "image/svg+xml" storage/tmp/qr.h && pass "SVG Content-Type" || fail "svg ct" "no header"
+head -c 5 storage/tmp/qr.svg | grep -q "<?xml" && pass "SVG 内容合法" || fail "svg body" "not xml"
 
 echo "=== 15. 管理端车辆列表 / 广告位 ==="
 VL=$(curl -s -H "Authorization: Bearer $TOK" "$B/api/admin/vehicles")

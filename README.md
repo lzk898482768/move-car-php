@@ -45,7 +45,7 @@
 | --- | --- |
 | PHP | **7.4 ~ 8.3**（推荐 8.0+） |
 | 必需扩展 | `pdo` + `pdo_mysql`（MySQL）或 `pdo_sqlite`+`sqlite3`（SQLite）、`mbstring`、`openssl`、`json` |
-| 生成二维码 | `gd`（缺失则二维码接口不可用） |
+| 生成二维码 | 无必需扩展（默认输出 SVG，不依赖 GD；`gd` 仅为可选的 PNG 格式） |
 | 发送通知 | `curl` |
 | 数据库 | MySQL 5.6+ / MariaDB 10+，或 SQLite 3 |
 | Web 服务器 | Nginx（推荐）/ Apache |
@@ -131,7 +131,7 @@ MC_BASE=http://127.0.0.1:8088 bash smoke.sh
 
 ## 八、常见问题
 
-**Q：二维码扫出来是空白？** 检查 PHP 是否安装 `gd` 扩展。
+**Q：二维码扫不出来？** 新版默认输出 SVG（无需 GD）；若浏览器极旧不支持 SVG，可在宝塔安装 `gd` 扩展后用 `qr.php?text=...&format=png`。
 **Q：页面提示「系统尚未安装」？** 访问 `/install.php`；若已安装过，确认 `app/config.php` 存在且 `storage/` 可写。
 **Q：安装时报数据库连接失败？** MySQL 需先在宝塔「数据库」里建库，再用**数据库账号密码**（不是面板密码）填写。
 **Q：改了后台通道设置前台没变化？** 所有 API 响应均为 `no-store`，回到前台会自动刷新；若仍缓存，强制刷新一次浏览器。
