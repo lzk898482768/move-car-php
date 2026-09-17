@@ -1288,6 +1288,15 @@ async function renderAdminConsole(token) {
         <div id="adminCfgResult" class="result hidden" style="margin-top:10px"></div>
       </form>
     </section>
+    <section class="card" style="margin-top:16px">
+      <h2>⚠️ 通道错误日志</h2>
+      <p class="muted">最近的通知失败记录，定位渠道故障（短信/公众号/企微/隐私号不通）时优先看这里。每条包含通道、车牌、失败原因与时间。</p>
+      <div class="row-actions" style="margin-top:10px">
+        <button class="btn btn-sm btn-primary" id="chErrRefresh">刷新</button>
+        <span class="muted" id="chErrCount" style="font-size:13px"></span>
+      </div>
+      <div id="channelErrorBox" style="margin-top:12px"><p class="muted">正在加载…</p></div>
+    </section>
     </div>
 
     <!-- 车牌查手机号 -->
@@ -1456,6 +1465,11 @@ async function renderAdminConsole(token) {
       $$(".admin-tab", mount).forEach((b) => b.classList.toggle("active", b === btn));
       $$(".admin-tab-panel", mount).forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== tab));
       try { localStorage.setItem("adminTab", tab); } catch {}
+      // 打开「通知渠道」时刷新通道错误日志
+      if (tab === "channels") {
+        const box = $("#channelErrorBox", mount);
+        if (box) { try { setupChannelErrors(token, mount); } catch (e) { console.error(e); } }
+      }
     });
   });
   try {
@@ -1502,6 +1516,9 @@ async function renderAdminConsole(token) {
 
   // 挪车记录
   setupNotifications(token, mount);
+
+  // 通道错误日志（在 通知渠道 标签页内展示）
+  setupChannelErrors(token, mount);
 
   // 车牌管理
   reloadAdminVehicles(token, "");
@@ -2233,6 +2250,47 @@ function setupNotifications(token, mount) {
       showResult(result, escapeHtml(err.message || '导出失败'), true);
     }
   };
+  reload();
+}
+
+function setupChannelErrors(token, mount) {
+  const box = $('#channelErrorBox', mount);
+  const countEl = $('#chErrCount', mount);
+  if (!box) return;
+  const render = (logs) => {
+    if (!logs.length) {
+      box.innerHTML = '<p class="muted">✅ 暂无失败记录，所有通道运行正常。</p>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    box.innerHTML = '<div class="log-list">' + logs.map((l) => {
+      const plate = escapeHtml(l.plateNumber || '(未绑定车牌)');
+      const ch = NOTIFY_CH_LABELS[l.channel] || escapeHtml(l.channel);
+      const time = escapeHtml(fmtDate(l.createdAt));
+      const err = escapeHtml(l.errorSummary || '未知错误');
+      return '<div class="log-item err-log" style="flex-wrap:wrap;align-items:flex-start;gap:8px;border-left:3px solid #ef4444">'
+        + '<div style="flex:1;min-width:200px">'
+        + '<div class="ch" style="font-size:15px">' + plate + ' · ' + ch + '</div>'
+        + '<div class="t" style="color:#b91c1c">' + err + '</div>'
+        + '<div class="t muted">' + time + '</div>'
+        + '</div>'
+        + '<span class="pill err"><span class="dot"></span>失败</span>'
+        + '</div>';
+    }).join('') + '</div>';
+    if (countEl) countEl.textContent = '共 ' + logs.length + ' 条失败（最近 ' + Math.min(logs.length, 30) + ' 条）';
+  };
+  const reload = async () => {
+    box.innerHTML = '<p class="muted">正在加载…</p>';
+    try {
+      const r = await api.adminListNotifications(token, { status: 'failed', limit: 30 });
+      render(r.logs || []);
+    } catch (err) {
+      if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
+      box.innerHTML = '<p class="muted">加载失败：' + escapeHtml(err.message || '未知错误') + '</p>';
+    }
+  };
+  const btn = $('#chErrRefresh', mount);
+  if (btn) btn.onclick = reload;
   reload();
 }
 

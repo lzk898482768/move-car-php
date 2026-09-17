@@ -247,10 +247,10 @@ function dispatch_notify(array $vehicle, array $g, string $channel, array $input
     if ($channel === 'notify_all') {
         $errors = [];
         $ok = 0;
-        try { send_wechat_work($vehicle, $g); $ok++; } catch (Throwable $e) { $errors[] = $e->getMessage(); }
-        try { send_wechat_template($vehicle, $g); $ok++; } catch (Throwable $e) { $errors[] = $e->getMessage(); }
+        try { send_wechat_work($vehicle, $g); $ok++; } catch (Throwable $e) { $errors[] = '企微：' . $e->getMessage(); }
+        try { send_wechat_template($vehicle, $g); $ok++; } catch (Throwable $e) { $errors[] = '公众号：' . $e->getMessage(); }
         if ($ok === 0) notify_error($errors[0] ?? '一键通知发送失败');
-        return ['sent' => $ok];
+        return ['sent' => $ok, 'errors' => $errors];
     }
     if ($channel === 'wechat') send_wechat_template($vehicle, $g);
     elseif ($channel === 'wechat_work') send_wechat_work($vehicle, $g);

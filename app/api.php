@@ -326,6 +326,11 @@ function api_notify(string $token): void
     try {
         $out = dispatch_notify($v, $g, $channel, $in);
         $virtualNumber = $out['virtualNumber'] ?? '';
+        // 一键通知部分通道失败也记入错误日志，便于排查渠道故障
+        if (!empty($out['errors'])) {
+            $status = 'failed';
+            $errorSummary = str_slice('部分通道失败：' . implode('；', $out['errors']));
+        }
     } catch (Throwable $e) {
         $status = 'failed';
         $errorSummary = str_slice($e->getMessage());
