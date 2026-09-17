@@ -65,6 +65,20 @@ function api_admin_overview(): void
     $callsToday = (int)DB::val('SELECT COUNT(*) FROM call_logs WHERE created_at >= ?', [$today], 0);
     $channels = [];
     foreach (channel_groups() as $c) $channels[$c['key']] = channel_opened($g, $c['key']);
+
+    // 近 7 日趋势（通知 / 拨号）
+    $trends = [];
+    for ($i = 6; $i >= 0; $i--) {
+        $d = date('Y-m-d', strtotime("-{$i} days"));
+        $start = $d . ' 00:00:00';
+        $end = date('Y-m-d', strtotime("-{$i} days +1 day")) . ' 00:00:00';
+        $trends[] = [
+            'date' => $d,
+            'notifications' => (int)DB::val('SELECT COUNT(*) FROM notification_logs WHERE created_at >= ? AND created_at < ?', [$start, $end], 0),
+            'calls' => (int)DB::val('SELECT COUNT(*) FROM call_logs WHERE created_at >= ? AND created_at < ?', [$start, $end], 0),
+        ];
+    }
+
     json_out([
         'vehicles' => $vehicles,
         'qr' => [
@@ -76,6 +90,7 @@ function api_admin_overview(): void
         'today' => ['notifications' => $notifiedToday, 'failed' => $failedToday, 'calls' => $callsToday],
         'channels' => $channels,
         'runtime' => ['php' => PHP_VERSION, 'db' => DB::driver(), 'version' => MC_SCHEMA_VERSION],
+        'trends' => $trends,
     ]);
 }
 
@@ -299,13 +314,7 @@ function api_admin_vehicle_owner_token(int $id): void
 function api_admin_vehicle_export(): void
 {
     $rows = DB::all('SELECT * FROM vehicles ORDER BY id DESC');
-    $data = [];
-    foreach ($rows as $v) {
-        $phone = '';
-        try { if ($v['owner_phone_enc']) $phone = decrypt_text($v['owner_phone_enc']); } catch (Throwable $e) {}
-        $data[] = [$v['plate_number'], $phone, $v['vehicle_token'], $v['owner_token'], $v['created_at']];
-    }
-    csv_download('vehicles-' . date('Ymd') . '.csv', ['车牌', '手机号', '挪车令牌', '管理令牌', '创建时间'], $data);
+    json_out(['vehicles' => array_map('admin_vehicle_view', $rows)]);
 }
 
 function api_admin_vehicle_import(): void
@@ -556,4 +565,101 @@ function api_admin_call_logs_bulk_delete(): void
     $ph = DB::placeholders(count($ids));
     $n = DB::exec("DELETE FROM call_logs WHERE id IN ($ph)", $ids);
     json_message("已删除 {$n} 条日志。", ['deleted' => $n]);
+}
+
+/* ---------------- 挪车记录（访客发起的挪车通知） ---------------- */
+
+function notify_log_view(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'vehicleId' => $r['vehicle_id'] !== null ? (int)$r['vehicle_id'] : null,
+        'plateNumber' => $r['plate_number'] ?? '',
+        'channel' => $r['channel'],
+        'status' => $r['status'],
+        'errorSummary' => $r['error_summary'] ?? '',
+        'createdAt' => iso_out($r['created_at']),
+    ];
+}
+
+function build_notify_filter(): array
+{
+    $q = input_str('q');
+    $channel = input_str('channel');
+    $status = input_str('status');
+    $from = input_str('from');
+    $to = input_str('to');
+    $vehicleId = input_str('vehicleId');
+    $where = [];
+    $binds = [];
+    if ($channel !== '') { $where[] = 'n.channel = ?'; $binds[] = $channel; }
+    if ($status !== '') { $where[] = 'n.status = ?'; $binds[] = $status; }
+    if ($vehicleId !== '') { $where[] = 'n.vehicle_id = ?'; $binds[] = (int)$vehicleId; }
+    if ($from !== '') { $where[] = 'n.created_at >= ?'; $binds[] = to_db_time($from); }
+    if ($to !== '') { $where[] = 'n.created_at <= ?'; $binds[] = to_db_time($to, true); }
+    if ($q !== '') {
+        $plate = normalize_plate($q);
+        if (is_plate($plate)) {
+            $where[] = '(v.plate_number LIKE ? OR v.plate_number_hash = ?)';
+            $binds[] = "%$plate%";
+            $binds[] = sha256_hex($plate);
+        } else {
+            $where[] = 'v.plate_number LIKE ?';
+            $binds[] = "%$q%";
+        }
+    }
+    return [$where ? 'WHERE ' . implode(' AND ', $where) : '', $binds];
+}
+
+const NOTIFY_CHANNEL_LABELS = [
+    'wechat_work' => '企微',
+    'wechat' => '公众号',
+    'sms' => '短信',
+    'privacy_call' => '隐私拨号',
+    'direct_call' => '直拨',
+];
+
+function api_admin_notifications(): void
+{
+    $limit = min(max((int)input_str('limit', '50'), 1), 500);
+    $offset = max((int)input_str('offset', '0'), 0);
+    [$where, $binds] = build_notify_filter();
+    $rows = DB::all("SELECT n.*, v.plate_number FROM notification_logs n LEFT JOIN vehicles v ON v.id = n.vehicle_id {$where} ORDER BY n.id DESC LIMIT ? OFFSET ?", array_merge($binds, [$limit, $offset]));
+    $total = (int)DB::val("SELECT COUNT(*) FROM notification_logs n LEFT JOIN vehicles v ON v.id = n.vehicle_id {$where}", $binds, 0);
+    json_out(['logs' => array_map('notify_log_view', $rows), 'total' => $total, 'limit' => $limit, 'offset' => $offset]);
+}
+
+function api_admin_notifications_export(): void
+{
+    [$where, $binds] = build_notify_filter();
+    $rows = DB::all("SELECT n.*, v.plate_number FROM notification_logs n LEFT JOIN vehicles v ON v.id = n.vehicle_id {$where} ORDER BY n.id DESC LIMIT 5000", $binds);
+    json_out(['logs' => array_map('notify_log_view', $rows)]);
+}
+
+/* ---------------- 车辆批量操作 ---------------- */
+
+function api_admin_vehicles_bulk_delete(): void
+{
+    $in = request_json();
+    $ids = array_values(array_filter(array_map('intval', (array)($in['ids'] ?? []))));
+    if (!$ids) json_error('empty', '请选择要删除的车牌。', 400);
+    $ph = DB::placeholders(count($ids));
+    DB::exec("DELETE FROM notification_logs WHERE vehicle_id IN ($ph)", $ids);
+    DB::exec("DELETE FROM call_logs WHERE vehicle_id IN ($ph)", $ids);
+    foreach ($ids as $id) release_qr_for_vehicle($id);
+    $n = DB::exec("DELETE FROM vehicles WHERE id IN ($ph)", $ids);
+    json_message("已删除 {$n} 条车牌记录，二维码已退回未绑定。");
+}
+
+function api_admin_vehicles_bulk_export(): void
+{
+    $in = request_json();
+    $ids = array_values(array_filter(array_map('intval', (array)($in['ids'] ?? []))));
+    if ($ids) {
+        $ph = DB::placeholders(count($ids));
+        $rows = DB::all("SELECT * FROM vehicles WHERE id IN ($ph) ORDER BY id DESC", $ids);
+    } else {
+        $rows = DB::all('SELECT * FROM vehicles ORDER BY id DESC');
+    }
+    json_out(['vehicles' => array_map('admin_vehicle_view', $rows)]);
 }

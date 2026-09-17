@@ -46,6 +46,10 @@ function route_api(string $method, string $path): void
         ['GET', '#^/api/admin/lookup$#', 'api_admin_lookup', true],
         ['POST', '#^/api/admin/password$#', 'api_admin_password', true],
 
+        // 挪车记录（访客发起的挪车通知）
+        ['GET', '#^/api/admin/notifications$#', 'api_admin_notifications', true],
+        ['GET', '#^/api/admin/notifications/export$#', 'api_admin_notifications_export', true],
+
         // 广告位
         ['GET', '#^/api/admin/ads$#', 'api_admin_ads_list', true],
         ['POST', '#^/api/admin/ads$#', 'api_admin_ads_create', true],
@@ -60,6 +64,8 @@ function route_api(string $method, string $path): void
         ['GET', '#^/api/admin/vehicles/(\d+)/owner-token$#', 'api_admin_vehicle_owner_token', true],
         ['PUT', '#^/api/admin/vehicles/(\d+)$#', 'api_admin_vehicle_update', true],
         ['DELETE', '#^/api/admin/vehicles/(\d+)$#', 'api_admin_vehicle_delete', true],
+        ['POST', '#^/api/admin/vehicles/bulk-delete$#', 'api_admin_vehicles_bulk_delete', true],
+        ['POST', '#^/api/admin/vehicles/bulk-export$#', 'api_admin_vehicles_bulk_export', true],
 
         // 预生成二维码
         ['POST', '#^/api/admin/qr-codes/batch$#', 'api_admin_qr_batch', true],

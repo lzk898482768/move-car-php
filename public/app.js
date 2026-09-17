@@ -1150,6 +1150,7 @@ async function renderAdminConsole(token) {
         <span class="muted" id="ovRuntime" style="font-size:12px"></span>
       </div>
       <div class="stat-row" id="ovStats" style="margin-top:10px"><p class="muted">正在加载…</p></div>
+      <div class="ov-chart" id="ovChart" style="margin-top:12px"></div>
       <p class="field-hint" id="ovChannels" style="margin-top:8px"></p>
     </section>
 
@@ -1159,6 +1160,7 @@ async function renderAdminConsole(token) {
       <button type="button" class="admin-tab" data-tab="channels">🔔 通知渠道</button>
       <button type="button" class="admin-tab" data-tab="lookup">🔍 查车主电话</button>
       <button type="button" class="admin-tab" data-tab="calls">📞 拨号日志</button>
+      <button type="button" class="admin-tab" data-tab="notify">📨 挪车记录</button>
       <button type="button" class="admin-tab" data-tab="ads">🖼️ 广告位</button>
       <button type="button" class="admin-tab" data-tab="account">👤 账号管理</button>
     </nav>
@@ -1178,6 +1180,11 @@ async function renderAdminConsole(token) {
         <button class="btn btn-sm btn-primary" id="vhAdd">＋ 新增车牌</button>
         <button class="btn btn-sm btn-ghost" id="vhImportBtn">导入 CSV / JSON</button>
         <button class="btn btn-sm btn-ghost" id="vhExportBtn">导出 CSV</button>
+        <span style="flex:1"></span>
+        <label class="switch" style="flex:none"><input type="checkbox" id="vhSelectAll" /><span class="track"></span><span class="thumb"></span></label>
+        <span class="muted" style="align-self:center;white-space:nowrap">全选本页</span>
+        <button class="btn btn-sm btn-ghost" id="vhBulkExport">批量导出</button>
+        <button class="btn btn-sm btn-danger" id="vhBulkDelete">批量删除</button>
         <input type="file" id="vhImportFile" accept=".csv,.json,text/csv,application/json" class="hidden" />
       </div>
 
@@ -1402,6 +1409,44 @@ async function renderAdminConsole(token) {
       <div id="adminAcctResult" class="result hidden" style="margin-top:10px"></div>
     </section>
     </div>
+
+    <div class="admin-tab-panel hidden" data-panel="notify">
+    <section class="card">
+      <h2>📨 挪车记录</h2>
+      <p class="muted">所有访客对车主发起的挪车通知（短信 / 公众号 / 企微 / 电话）。可筛选、查看明细并导出。</p>
+      <div class="grid-form" id="ntFilterForm" style="margin-top:12px">
+        <label>车牌（模糊）<input id="ntQ" placeholder="如 粤B 或完整车牌" /></label>
+        <label>通知通道
+          <select id="ntChannel">
+            <option value="">全部</option>
+            <option value="wechat_work">企微</option>
+            <option value="wechat">公众号</option>
+            <option value="sms">短信</option>
+            <option value="privacy_call">隐私拨号</option>
+            <option value="direct_call">直拨</option>
+          </select>
+        </label>
+        <label>状态
+          <select id="ntStatus">
+            <option value="">全部</option>
+            <option value="sent">成功</option>
+            <option value="failed">失败</option>
+          </select>
+        </label>
+        <label>开始日期<input id="ntFrom" type="date" /></label>
+        <label>结束日期<input id="ntTo" type="date" /></label>
+      </div>
+      <div class="row-actions" style="margin-top:10px">
+        <button class="btn btn-sm btn-primary" id="ntSearch">查询</button>
+        <button class="btn btn-sm btn-ghost" id="ntReset">重置</button>
+        <button class="btn btn-sm btn-ghost" id="ntExport">导出 CSV</button>
+        <span class="muted" id="ntCount" style="font-size:13px"></span>
+      </div>
+      <div id="ntListBox" style="margin-top:12px"><p class="muted">正在加载…</p></div>
+      <div id="ntPagination" class="qr-pagination"></div>
+      <div id="ntResult" class="result hidden" style="margin-top:10px"></div>
+    </section>
+    </div>
   </div>`;
 
   // 标签页切换（一次只显示一个区块，避免单页堆叠）
@@ -1454,6 +1499,9 @@ async function renderAdminConsole(token) {
 
   // 修改管理员自己的密码
   $("#adChangePwd", mount).onclick = () => openAdminPasswordModal(token);
+
+  // 挪车记录
+  setupNotifications(token, mount);
 
   // 车牌管理
   reloadAdminVehicles(token, "");
@@ -1513,6 +1561,61 @@ async function renderAdminConsole(token) {
       if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
       showResult(result, escapeHtml(err.message || "导出失败"), true);
     }
+  };
+
+  // 车牌批量操作
+  const vhSelAll = $("#vhSelectAll", mount);
+  if (vhSelAll) {
+    vhSelAll.onchange = () => $$("[data-vh-id]", mount).forEach((c) => { c.checked = vhSelAll.checked; });
+  }
+  const selectedVehicleIds = () => $$("[data-vh-id]", mount).filter((c) => c.checked).map((c) => Number(c.dataset.vhId));
+
+  $("#vhBulkExport", mount).onclick = async () => {
+    const ids = selectedVehicleIds();
+    if (!ids.length) { toast("请先勾选要导出的车牌", "err"); return; }
+    const result = $("#vhResult", mount);
+    showResult(result, `正在导出 ${ids.length} 条…`);
+    try {
+      const r = await api.adminBulkExportVehicles(token, ids);
+      const list = r.vehicles || [];
+      const rows = [["车牌号", "查看密码", "手机号", "短信通知", "隐私拨号", "一键通知", "微信OpenID", "绑定ID", "创建时间"]];
+      list.forEach((v) => rows.push([
+        v.plateNumber, "", v.ownerPhone,
+        v.smsEnabled ? "是" : "否", v.privacyCallEnabled ? "是" : "否",
+        v.notifyAllEnabled ? "是" : "否", v.wechatOpenid || "", v.id, fmtDate(v.createdAt),
+      ]));
+      const csv = rows
+        .map((cells) => cells.map((c) => {
+          const s = String(c ?? "");
+          return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+        }).join(","))
+        .join("\r\n");
+      downloadFile(`move-car-vehicles-${new Date().toISOString().slice(0, 10)}.csv`, "\ufeff" + csv);
+      showResult(result, `✅ 已导出 ${list.length} 条车牌记录（查看密码只存哈希，无法导出，导入时再填即可）。`);
+      toast("已导出", "ok");
+    } catch (err) {
+      if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
+      showResult(result, escapeHtml(err.message || "导出失败"), true);
+    }
+  };
+
+  $("#vhBulkDelete", mount).onclick = async () => {
+    const ids = selectedVehicleIds();
+    if (!ids.length) { toast("请先勾选要删除的车牌", "err"); return; }
+    openModal({
+      title: "批量删除车牌？",
+      body: `将删除选中的 <b>${ids.length}</b> 个车牌绑定及其挪车码、全部通知与拨号记录，二维码立即失效且不可恢复。`,
+      confirmText: "确认删除",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const r = await api.adminBulkDeleteVehicles(token, ids);
+          toast(r.message || "已删除", "ok");
+          if (vhSelAll) vhSelAll.checked = false;
+          await reloadAdminVehicles(token, $("#vhSearch", mount).value.trim());
+        } catch (err) { toast(err.message || "删除失败", "err"); }
+      },
+    });
   };
 
   // 保存全局配置
@@ -1765,6 +1868,7 @@ function renderAdminVehiclesList(token, vehicles) {
   }
   box.innerHTML = `<div class="log-list">` + vehicles.map((v) => `
       <div class="log-item" style="flex-wrap:wrap;align-items:flex-start;gap:8px">
+        <label class="switch" style="flex:none;margin-top:4px"><input type="checkbox" data-vh-id="${v.id}" /><span class="track"></span><span class="thumb"></span></label>
         <div style="flex:1;min-width:170px">
           <div class="ch" style="font-size:15px">
             ${escapeHtml(v.plateNumber)}
@@ -1995,6 +2099,144 @@ function printQrCodes(codes, batchNo) {
   return undefined;
 }
 
+function renderTrendChart(el, trends) {
+  if (!el) return;
+  if (!trends || !trends.length) { el.innerHTML = ""; return; }
+  const W = 660, H = 200, pad = 30;
+  const max = Math.max(1, ...trends.map((t) => Math.max(t.notifications, t.calls)));
+  const n = trends.length;
+  const gap = (W - pad * 2) / n;
+  const bw = Math.min(14, gap / 2.6);
+  const hFor = (v) => (v / max) * (H - pad - 22);
+  let bars = "", labels = "";
+  const C = { notifications: "#16a34a", calls: "#2563eb" };
+  trends.forEach((t, i) => {
+    const cx = pad + gap * i + gap / 2;
+    const baseY = H - pad;
+    const hn = hFor(t.notifications);
+    const hc = hFor(t.calls);
+    bars += `<rect x="${(cx - bw - 1).toFixed(1)}" y="${(baseY - hn).toFixed(1)}" width="${bw.toFixed(1)}" height="${hn.toFixed(1)}" rx="2" fill="${C.notifications}"><title>${t.date} 通知 ${t.notifications}</title></rect>`;
+    bars += `<rect x="${(cx + 1).toFixed(1)}" y="${(baseY - hc).toFixed(1)}" width="${bw.toFixed(1)}" height="${hc.toFixed(1)}" rx="2" fill="${C.calls}"><title>${t.date} 拨打 ${t.calls}</title></rect>`;
+    labels += `<text x="${cx.toFixed(1)}" y="${H - 9}" font-size="10" text-anchor="middle" fill="#64748b">${t.date.slice(5)}</text>`;
+  });
+  const yticks = [0, max / 2, max]
+    .map((v) => `<text x="${pad - 6}" y="${(H - pad - hFor(v) + 3).toFixed(1)}" font-size="9" text-anchor="end" fill="#94a3b8">${Math.round(v)}</text>`)
+    .join("");
+  el.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="近7日趋势">
+      <line x1="${pad}" y1="${H - pad}" x2="${W - pad / 2}" y2="${H - pad}" stroke="#e2e8f0" />
+      ${yticks}${bars}${labels}
+    </svg>
+    <div class="ov-chart-legend"><span><i style="background:${C.notifications}"></i>通知</span><span><i style="background:${C.calls}"></i>拨打</span><span class="muted">近 7 日</span></div>`;
+}
+
+const NOTIFY_CH_LABELS = { wechat_work: '企微', wechat: '公众号', sms: '短信', privacy_call: '隐私拨号', direct_call: '直拨' };
+
+function setupNotifications(token, mount) {
+  const box = $('#ntListBox', mount);
+  const result = $('#ntResult', mount);
+  const count = $('#ntCount', mount);
+  const PAGE = 50;
+  const state = { total: 0, page: 1, pages: 1 };
+
+  const collectFilters = () => {
+    const v = (id) => { const el = $('#' + id, mount); return el ? el.value.trim() : ''; };
+    const p = {};
+    if (v('ntQ')) p.q = v('ntQ');
+    if (v('ntChannel')) p.channel = v('ntChannel');
+    if (v('ntStatus')) p.status = v('ntStatus');
+    if (v('ntFrom')) p.from = v('ntFrom');
+    if (v('ntTo')) p.to = v('ntTo');
+    return p;
+  };
+
+  const rowHtml = (l) => {
+    const plate = escapeHtml(l.plateNumber || '(未绑定车牌)');
+    const ch = NOTIFY_CH_LABELS[l.channel] || escapeHtml(l.channel);
+    const time = escapeHtml(fmtDate(l.createdAt));
+    const err = l.errorSummary ? ' · ' + escapeHtml(l.errorSummary) : '';
+    const cls = l.status === 'sent' ? 'ok' : 'err';
+    const txt = l.status === 'sent' ? '成功' : '失败';
+    return '<div class="log-item" style="flex-wrap:wrap;align-items:flex-start;gap:8px">'
+      + '<div style="flex:1;min-width:200px">'
+      + '<div class="ch" style="font-size:15px">' + plate + ' · ' + ch + '</div>'
+      + '<div class="t">' + time + err + '</div>'
+      + '</div>'
+      + '<span class="pill ' + cls + '"><span class="dot"></span>' + txt + '</span>'
+      + '</div>';
+  };
+
+  const reload = async () => {
+    if (!box) return;
+    box.innerHTML = '<p class="muted">正在加载…</p>';
+    try {
+      const r = await api.adminListNotifications(token, Object.assign({}, collectFilters(), { limit: PAGE, offset: (state.page - 1) * PAGE }));
+      const logs = r.logs || [];
+      state.total = r.total || 0;
+      state.pages = Math.max(1, Math.ceil(state.total / PAGE));
+      if (!logs.length) {
+        box.innerHTML = '<p class="muted">没有符合条件的挪车记录。</p>';
+      } else {
+        box.innerHTML = '<div class="log-list">' + logs.map(rowHtml).join('') + '</div>';
+      }
+      renderPagination();
+      if (count) count.textContent = '共 ' + state.total + ' 条' + (Object.keys(collectFilters()).length ? '（已筛选）' : '');
+    } catch (err) {
+      if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
+      box.innerHTML = '<p class="muted">' + escapeHtml(err.message || '加载失败') + '</p>';
+    }
+  };
+
+  const renderPagination = () => {
+    const el = $('#ntPagination', mount);
+    if (!el) return;
+    if (state.pages <= 1) { el.innerHTML = ''; return; }
+    const p = state.page;
+    const btn = (label, page, opts) => {
+      opts = opts || {};
+      return '<button type="button" class="qr-page-btn ' + (opts.active ? 'active' : '') + '" data-nt-page="' + page + '"' + (opts.disabled ? ' disabled' : '') + '>' + label + '</button>';
+    };
+    const pages = [btn('‹', Math.max(1, p - 1), { disabled: p <= 1 })];
+    for (let i = 1; i <= state.pages; i++) {
+      if (i === 1 || i === state.pages || Math.abs(i - p) <= 1) pages.push(btn(String(i), i, { active: i === p }));
+      else if (i === 2 || i === state.pages - 1) pages.push('<span class="qr-page-ellipsis">…</span>');
+    }
+    pages.push(btn('›', Math.min(state.pages, p + 1), { disabled: p >= state.pages }));
+    el.innerHTML = pages.join('');
+    el.querySelectorAll('[data-nt-page]').forEach((b) => b.addEventListener('click', () => {
+      state.page = Math.max(1, Math.min(state.pages, Number(b.dataset.ntPage)));
+      reload();
+    }));
+  };
+
+  $('#ntSearch', mount).onclick = () => { state.page = 1; reload(); };
+  $('#ntReset', mount).onclick = () => {
+    ['ntQ', 'ntChannel', 'ntStatus', 'ntFrom', 'ntTo'].forEach((id) => { const el = $('#' + id, mount); if (el) el.value = ''; });
+    state.page = 1; reload();
+  };
+  $('#ntExport', mount).onclick = async () => {
+    showResult(result, '正在导出…');
+    try {
+      const r = await api.adminExportNotifications(token, collectFilters());
+      const list = r.logs || [];
+      const rows = [['ID', '车牌', '通道', '状态', '失败原因', '时间']];
+      list.forEach((l) => rows.push([String(l.id), l.plateNumber || '', NOTIFY_CH_LABELS[l.channel] || l.channel, l.status === 'sent' ? '成功' : '失败', l.errorSummary || '', fmtDate(l.createdAt)]));
+      const csv = rows.map((cells) => cells.map((c) => {
+        const s = String(c == null ? '' : c);
+        return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s;
+      }).join(',')).join('\r\n');
+      downloadFile('move-car-notify-' + new Date().toISOString().slice(0, 10) + '.csv', '\ufeff' + csv);
+      showResult(result, '已导出 ' + list.length + ' 条挪车记录。');
+      toast('已导出', 'ok');
+    } catch (err) {
+      if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
+      showResult(result, escapeHtml(err.message || '导出失败'), true);
+    }
+  };
+  reload();
+}
+
+
 async function loadAdminOverview(token, mount) {
   const box = $("#ovStats", mount);
   const rt = $("#ovRuntime", mount);
@@ -2008,6 +2250,8 @@ async function loadAdminOverview(token, mount) {
         <div class="stat"><div class="n">${r.today?.notifications ?? 0}</div><div class="l">今日通知（失败 ${r.today?.failed ?? 0}）</div></div>
         <div class="stat"><div class="n">${r.today?.calls ?? 0}</div><div class="l">今日拨号</div></div>`;
     }
+    const chartEl = $("#ovChart", mount);
+    if (chartEl) renderTrendChart(chartEl, r.trends || []);
     if (rt) rt.textContent = `PHP ${r.runtime?.php || "-"} · ${String(r.runtime?.db || "-").toUpperCase()} · v${r.runtime?.version || "-"}`;
     if (ch) {
       const opened = Object.entries(r.channels || {}).filter(([, v]) => v).map(([k]) => CHANNEL_LABELS[k] || k);

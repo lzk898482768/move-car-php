@@ -304,6 +304,22 @@ export const api = {
     });
   },
 
+  // 挪车记录（访客发起的挪车通知）
+  adminListNotifications: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/api/admin/notifications${qs ? `?${qs}` : ""}`, { headers: { "X-Admin-Token": token } });
+  },
+  adminExportNotifications: (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/api/admin/notifications/export${qs ? `?${qs}` : ""}`, { headers: { "X-Admin-Token": token } });
+  },
+
+  // 车辆批量操作
+  adminBulkDeleteVehicles: (token, ids) =>
+    request("/api/admin/vehicles/bulk-delete", { method: "POST", headers: { "X-Admin-Token": token }, body: { ids } }),
+  adminBulkExportVehicles: (token, ids) =>
+    request("/api/admin/vehicles/bulk-export", { method: "POST", headers: { "X-Admin-Token": token }, body: { ids } }),
+
   // 管理员修改自己的登录密码
   adminChangePassword: (token, currentPassword, newPassword) =>
     request("/api/admin/password", {
