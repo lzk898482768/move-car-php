@@ -1,0 +1,22 @@
+# 生成的配置（含密钥，切勿提交）
+/app/config.php
+
+# 运行时数据
+/storage/cache/*
+/storage/logs/*
+/storage/tmp/*
+/storage/*.sqlite
+/storage/*.sqlite-wal
+/storage/*.sqlite-shm
+!storage/cache/.gitkeep
+!storage/logs/.gitkeep
+
+# 本地冒烟产物
+smoke-out.txt
+
+# 本地/系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

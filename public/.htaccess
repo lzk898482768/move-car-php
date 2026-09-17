@@ -1,0 +1,20 @@
+# Apache 伪静态（放到 public/ 下自动生效）
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 已存在的文件/目录直接访问（含 .html、.js、.css、图片）
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # 其余全部交给统一入口
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# 禁止列目录
+Options -Indexes
+
+# 统一入口响应头
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
