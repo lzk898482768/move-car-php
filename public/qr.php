@@ -66,7 +66,7 @@ $svg = ltrim($svg, "\xEF\xBB\xBF \t\r\n");
 
 header('Content-Type: image/svg+xml; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
-header('Cache-Control: public, max-age=86400');
+header('Cache-Control: no-store');
 header('Content-Length: ' . strlen($svg));
 if ($download) {
     header('Content-Disposition: attachment; filename="qrcode.svg"');
