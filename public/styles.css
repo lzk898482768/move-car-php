@@ -759,6 +759,131 @@ body.kb-open { overflow: hidden; }
 .qr-line1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .qr-actions { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
 
+/* ============= 后台 · 二维码列表（专业表格 + 全选 + 批量 + 分页） ============= */
+.qr-list-summary { font-size: 12px; font-weight: 500; }
+.qr-status-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin: 14px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.qr-status-tab {
+  border: 0; background: transparent;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 600;
+  border-bottom: 2px solid transparent;
+  color: var(--text-mute); cursor: pointer;
+  transition: color .15s, border-color .15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.qr-status-tab:hover { color: var(--brand-1); }
+.qr-status-tab.active { color: var(--brand-1); border-bottom-color: var(--brand-1); }
+.qr-status-tab .num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 20px; padding: 0 6px;
+  border-radius: 999px; background: rgba(22,163,74,.1);
+  color: var(--brand-1); font-size: 11.5px; font-weight: 700;
+}
+.qr-status-tab.active .num { background: var(--brand-1); color: #fff; }
+
+.qr-list-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; flex-wrap: wrap;
+  border-bottom: 1px dashed var(--border);
+}
+.qr-list-toolbar-bulk {
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: #fff; z-index: 2;
+}
+.qr-filter-cell { display: flex; flex-direction: column; gap: 3px; }
+.qr-filter-cell span { font-size: 11.5px; }
+.qr-filter-cell input, .qr-filter-cell select {
+  height: 34px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: #fff; font-size: 13px;
+}
+.qr-filter-actions { display: flex; align-items: flex-end; gap: 6px; }
+
+.qr-select-all { display: inline-flex; align-items: center; gap: 8px; }
+.qr-select-all input { width: 16px; height: 16px; accent-color: var(--brand-1); }
+.qr-selected-count { font-size: 12.5px; }
+.qr-bulk-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-left: 8px; }
+.qr-page-meta { font-size: 12.5px; margin-left: auto; }
+
+.qr-table-wrap { margin-top: 10px; }
+.qr-table {
+  width: 100%; border-collapse: collapse; background: #fff;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  font-size: 13px;
+}
+.qr-table thead th {
+  text-align: left; font-weight: 600; color: var(--text-mute);
+  background: #f8fafc; padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px; letter-spacing: .02em; text-transform: none;
+  white-space: nowrap;
+}
+.qr-table tbody td {
+  padding: 12px; vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+.qr-table tbody tr:last-child td { border-bottom: 0; }
+.qr-table tbody tr:hover { background: #fafbff; }
+.qr-table tbody tr.is-bound { background: rgba(22,163,74,.04); }
+
+.qr-table .col-check { width: 36px; text-align: center; }
+.qr-table .col-thumb { width: 64px; }
+.qr-table .col-id { width: 60px; }
+.qr-table .col-status { width: 88px; }
+.qr-table .col-batch { width: 140px; }
+.qr-table .col-token { min-width: 220px; }
+.qr-table .col-plate { width: 130px; }
+.qr-table .col-note { max-width: 160px; }
+.qr-table .col-time { width: 130px; }
+.qr-table .col-actions { width: 150px; }
+
+.qr-thumb-img {
+  width: 48px; height: 48px; border-radius: 6px;
+  background: #f8fafc; object-fit: contain; display: block;
+  border: 1px solid var(--border);
+}
+.qr-mono {
+  font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 12px; color: var(--text);
+}
+.qr-token {
+  display: inline-block; max-width: 180px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.qr-actions-cell { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.qr-table tbody td.col-actions { white-space: nowrap; }
+
+.qr-empty {
+  padding: 36px 12px; text-align: center;
+  color: var(--text-mute); font-size: 13px;
+  border: 1px dashed var(--border); border-radius: 10px;
+  background: #fafbff;
+}
+
+.qr-pagination {
+  display: flex; justify-content: center; gap: 4px; flex-wrap: wrap;
+  margin: 14px 0 6px;
+}
+.qr-page-btn {
+  min-width: 32px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); background: #fff; border-radius: 8px;
+  font-size: 12.5px; color: var(--text);
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+}
+.qr-page-btn:hover:not(:disabled) { border-color: var(--brand-1); color: var(--brand-1); }
+.qr-page-btn.active { background: var(--brand-1); color: #fff; border-color: var(--brand-1); }
+.qr-page-btn:disabled { opacity: .5; cursor: not-allowed; }
+.qr-page-ellipsis { padding: 6px 4px; color: var(--text-mute); font-size: 12px; }
+
+/* 旧的卡片式风格保留兜底 */
+.qr-row {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; background: #fff;
+}
+
 /* 后台通道卡片：开关已开但缺参数时的提示 */
 .cfg-missing {
   margin: 0 0 12px; padding: 8px 12px; border-radius: 10px;

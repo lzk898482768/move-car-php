@@ -276,6 +276,13 @@ export const api = {
       headers: { "X-Admin-Token": token },
       body: { ids },
     }),
+  // 通用批量（action=delete|disable|enable）
+  adminBulkQrCodes: (token, action, ids) =>
+    request("/api/admin/qr-codes/bulk", {
+      method: "POST",
+      headers: { "X-Admin-Token": token },
+      body: { action, ids },
+    }),
 
   // 拨号日志：筛选查询 / 导出 / 批量删除
   adminListCallLogs: (token, params = {}) => {

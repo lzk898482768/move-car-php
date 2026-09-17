@@ -1193,10 +1193,8 @@ async function renderAdminConsole(token) {
     <!-- 预生成二维码 -->
     <div class="admin-tab-panel hidden" data-panel="qr">
     <section class="card">
-      <h2>📱 二维码批量生成</h2>
+      <h2>📱 二维码管理</h2>
       <p class="muted">批量出码 → 打印贴到车上 → 车主扫码绑定 → 绑定后任何人再扫都进入挪车界面。未绑定的码被扫到时会提示车主先绑定。</p>
-
-      <div class="qr-stats" id="qrStats"></div>
 
       <form id="qrBatchForm" class="grid-form" style="margin-top:12px">
         <label>生成数量（1-200）
@@ -1225,29 +1223,47 @@ async function renderAdminConsole(token) {
     </section>
 
     <section class="card">
-      <h2>二维码列表</h2>
-      <div class="grid-form" style="margin-top:8px">
-        <label>状态
-          <select id="qrStatus">
-            <option value="">全部</option>
-            <option value="unbound">未绑定</option>
-            <option value="bound">已绑定</option>
-            <option value="disabled">已停用</option>
-          </select>
-        </label>
-        <label>批次
-          <select id="qrBatchFilter"><option value="">全部</option></select>
-        </label>
-        <label class="span-2">搜索
+      <h2 style="display:flex;align-items:center;gap:8px">二维码列表 <span class="muted qr-list-summary" id="qrListSummary"></span></h2>
+
+      <div class="qr-status-tabs" id="qrStatusTabs">
+        <button type="button" class="qr-status-tab active" data-status="">全部 <span class="num" id="qrTabTotal">-</span></button>
+        <button type="button" class="qr-status-tab" data-status="unbound">未绑定 <span class="num" id="qrTabUnbound">-</span></button>
+        <button type="button" class="qr-status-tab" data-status="bound">已绑定 <span class="num" id="qrTabBound">-</span></button>
+        <button type="button" class="qr-status-tab" data-status="disabled">已停用 <span class="num" id="qrTabDisabled">-</span></button>
+      </div>
+
+      <div class="qr-list-toolbar">
+        <label class="qr-filter-cell" style="flex:1;min-width:140px">
+          <span class="muted">搜索</span>
           <input id="qrSearch" placeholder="令牌 / 批次 / 备注 / 车牌" />
         </label>
+        <label class="qr-filter-cell">
+          <span class="muted">批次</span>
+          <select id="qrBatchFilter"><option value="">全部</option></select>
+        </label>
+        <div class="qr-filter-actions">
+          <button class="btn btn-sm btn-primary" id="qrSearchBtn">查询</button>
+          <button class="btn btn-sm btn-ghost" id="qrResetBtn">重置</button>
+        </div>
       </div>
-      <div class="row-actions" style="margin-top:10px">
-        <button class="btn btn-sm btn-primary" id="qrSearchBtn">查询</button>
-        <button class="btn btn-sm btn-ghost" id="qrResetBtn">重置</button>
-        <button class="btn btn-sm btn-danger" id="qrDeleteSel">删除所选（未绑定）</button>
+
+      <div class="qr-list-toolbar qr-list-toolbar-bulk">
+        <label class="qr-check qr-select-all">
+          <input type="checkbox" id="qrSelectAll" />
+          <span>全选本页</span>
+          <span class="muted qr-selected-count" id="qrSelectedCount">已选 0 项</span>
+        </label>
+        <div class="qr-bulk-actions">
+          <button class="btn btn-sm btn-ghost" id="qrBulkDisable" disabled>批量停用</button>
+          <button class="btn btn-sm btn-ghost" id="qrBulkEnable" disabled>批量启用</button>
+          <button class="btn btn-sm btn-danger" id="qrBulkDelete" disabled>批量删除</button>
+          <button class="btn btn-sm btn-ghost" id="qrExport">导出本页 CSV</button>
+        </div>
+        <span class="muted qr-page-meta" id="qrPageMeta"></span>
       </div>
-      <div id="qrListBox" style="margin-top:12px"><p class="muted">正在加载…</p></div>
+
+      <div id="qrListBox" class="qr-table-wrap"><p class="muted">正在加载…</p></div>
+      <div id="qrPagination" class="qr-pagination"></div>
       <div id="qrListResult" class="result hidden" style="margin-top:10px"></div>
     </section>
     </div>
@@ -2007,64 +2023,123 @@ async function loadAdminOverview(token, mount) {
 }
 
 function setupAdminQrCodes(token, mount) {
-  const statsEl = $("#qrStats", mount);
   const listBox = $("#qrListBox", mount);
-  const listResult = $("#qrListResult", mount);
-  const batchResult = $("#qrBatchResult", mount);
-  const gridEl = $("#qrBatchGrid", mount);
-  const previewWrap = $("#qrBatchPreviewWrap", mount);
-  const previewMeta = $("#qrBatchPreviewMeta", mount);
-  if (!statsEl || !listBox) return;
+  const pageMeta = $("#qrPageMeta", mount);
+  const paginationEl = $("#qrPagination", mount);
+  const selectedCountEl = $("#qrSelectedCount", mount);
+  const selectAllEl = $("#qrSelectAll", mount);
+  const tabsEl = $("#qrStatusTabs", mount);
+  if (!listBox) return;
 
   const filter = { status: "", batch: "", q: "" };
+  const PAGE_SIZE = 50;
+  const state = { rows: [], total: 0, page: 1, pages: 1 };
   let lastBatch = [];
   let lastBatchNo = "";
-  const selected = new Set();
+
+  const selected = new Set();  // 跨页保留 selected id
 
   const pill = (s) =>
     `<span class="pill ${s === "bound" ? "ok" : s === "disabled" ? "off" : "warn"}"><span class="dot"></span>${QR_STATUS_LABEL[s] || s}</span>`;
 
-  const renderStats = (stats = {}) => {
-    statsEl.innerHTML = `
-      <div class="qr-stat"><b>${stats.total || 0}</b><span>总数</span></div>
-      <div class="qr-stat"><b>${stats.unbound || 0}</b><span>未绑定</span></div>
-      <div class="qr-stat"><b>${stats.bound || 0}</b><span>已绑定</span></div>
-      <div class="qr-stat"><b>${stats.disabled || 0}</b><span>已停用</span></div>`;
+  const fmtDate = (s) => {
+    if (!s) return "-";
+    try {
+      const d = new Date(s);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch { return s; }
   };
 
-  const renderList = () => {
-    const rows = listBox.__codes || [];
-    if (!rows.length) {
-      listBox.innerHTML = `<p class="muted">没有符合条件的二维码。</p>`;
+  const setTabCounts = (stats = {}) => {
+    $("#qrTabTotal", mount).textContent = stats.total ?? 0;
+    $("#qrTabUnbound", mount).textContent = stats.unbound ?? 0;
+    $("#qrTabBound", mount).textContent = stats.bound ?? 0;
+    $("#qrTabDisabled", mount).textContent = stats.disabled ?? 0;
+  };
+
+  const setSelected = (n) => {
+    selectedCountEl.textContent = `已选 ${n} 项`;
+    const has = n > 0;
+    $("#qrBulkDelete", mount).disabled = !has;
+    $("#qrBulkEnable", mount).disabled = !has;
+    $("#qrBulkDisable", mount).disabled = !has;
+    if (selectAllEl) {
+      const visibleIds = state.rows.map((r) => r.id);
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+      const anyVisibleSelected = visibleIds.some((id) => selected.has(id));
+      selectAllEl.checked = allVisibleSelected;
+      selectAllEl.indeterminate = !allVisibleSelected && anyVisibleSelected;
+    }
+  };
+
+  const renderTable = () => {
+    if (!state.rows.length) {
+      listBox.innerHTML = `<div class="qr-empty">没有符合条件的二维码</div>`;
+      pageMeta.textContent = `共 0 条`;
+      paginationEl.innerHTML = "";
       return;
     }
-    listBox.innerHTML = `<div class="qr-list">` +
-      rows
-        .map(
-          (c) => `<div class="qr-row">
-            <label class="qr-check"><input type="checkbox" data-qr-sel="${c.id}" ${c.status === "bound" ? "disabled" : ""} ${selected.has(c.id) ? "checked" : ""}></label>
-            <img class="qr-thumb" src="${qrImageUrl(buildQrUrl(c.codeToken), 120)}" alt="二维码" loading="lazy" />
-            <div class="qr-meta">
-              <div class="qr-line1">${pill(c.status)} <span class="muted">#${c.id}</span> ${c.maskedPlate ? `<span class="pill ok"><span class="dot"></span>${escapeHtml(c.maskedPlate)}</span>` : ""}</div>
-              <div class="t muted" style="font-size:12px">批次 ${escapeHtml(c.batchNo || "-")}${c.note ? ` · ${escapeHtml(c.note)}` : ""}</div>
-              <div class="t muted" style="font-size:11px;word-break:break-all">${escapeHtml(c.codeToken)}</div>
-            </div>
-            <div class="qr-actions">
-              ${c.status === "unbound" ? `<button class="btn btn-xs btn-ghost" data-qr-disable="${c.id}">停用</button>` : ""}
-              ${c.status === "disabled" ? `<button class="btn btn-xs btn-ghost" data-qr-enable="${c.id}">启用</button>` : ""}
-              ${c.status !== "bound" ? `<button class="btn btn-xs btn-danger" data-qr-del="${c.id}">删除</button>` : ""}
-            </div>
-          </div>`
-        )
-        .join("") +
-      `</div>`;
+    const head = `<thead><tr>
+        <th class="col-check"><input type="checkbox" id="qrRowAll" aria-label="全选本页"></th>
+        <th class="col-thumb">缩略图</th>
+        <th class="col-id">ID</th>
+        <th class="col-status">状态</th>
+        <th class="col-batch">批次</th>
+        <th class="col-token">令牌</th>
+        <th class="col-plate">绑定车牌</th>
+        <th class="col-note">备注</th>
+        <th class="col-time">创建时间</th>
+        <th class="col-actions">操作</th>
+      </tr></thead>`;
+    const body = state.rows
+      .map(
+        (c) => `<tr class="qr-tr${c.status === 'bound' ? ' is-bound' : ''}">
+        <td class="col-check"><input type="checkbox" data-qr-row="${c.id}" ${selected.has(c.id) ? 'checked' : ''} ${c.status === 'bound' ? 'disabled' : ''}></td>
+        <td class="col-thumb"><img class="qr-thumb-img" src="${qrImageUrl(buildQrUrl(c.codeToken), 120)}" alt="${escapeHtml(c.codeToken)}" loading="lazy"></td>
+        <td class="col-id muted">#${c.id}</td>
+        <td class="col-status">${pill(c.status)}</td>
+        <td class="col-batch"><span class="qr-mono">${escapeHtml(c.batchNo || '-')}</span></td>
+        <td class="col-token">
+          <span class="qr-mono qr-token">${escapeHtml(c.codeToken)}</span>
+          <button class="btn btn-xs btn-ghost" data-qr-copy="${c.id}" title="复制 token">复制</button>
+        </td>
+        <td class="col-plate">${c.maskedPlate ? `<b>${escapeHtml(c.maskedPlate)}</b>` : '<span class="muted">—</span>'}</td>
+        <td class="col-note muted">${escapeHtml(c.note || '')}</td>
+        <td class="col-time muted">${fmtDate(c.createdAt)}</td>
+        <td class="col-actions">
+          <div class="qr-actions-cell">
+            ${c.status !== 'bound' && c.status !== 'disabled' ? `<button class="btn btn-xs btn-ghost" data-qr-disable="${c.id}">停用</button>` : ''}
+            ${c.status === 'disabled' ? `<button class="btn btn-xs btn-ghost" data-qr-enable="${c.id}">启用</button>` : ''}
+            ${c.status !== 'bound' ? `<button class="btn btn-xs btn-danger" data-qr-del="${c.id}">删除</button>` : '<span class="muted" style="font-size:12px">已绑定</span>'}
+          </div>
+        </td>
+      </tr>`
+      )
+      .join("");
+    listBox.innerHTML = `<table class="qr-table">${head}<tbody>${body}</tbody></table>`;
 
-    $$("[data-qr-sel]", listBox).forEach((box) =>
+    // 行 checkbox
+    $$("[data-qr-row]", listBox).forEach((box) =>
       box.addEventListener("change", () => {
-        const id = Number(box.dataset.qrSel);
+        const id = Number(box.dataset.qrRow);
         box.checked ? selected.add(id) : selected.delete(id);
+        setSelected(selected.size);
       })
     );
+    // 行 checkbox 内的全选（表头）
+    const rowAll = $("#qrRowAll", listBox);
+    if (rowAll) {
+      rowAll.checked = state.rows.length > 0 && state.rows.every((r) => selected.has(r.id));
+      rowAll.indeterminate = !rowAll.checked && state.rows.some((r) => selected.has(r.id));
+      rowAll.addEventListener("change", () => {
+        if (rowAll.checked) state.rows.forEach((r) => selected.add(r.id));
+        else state.rows.forEach((r) => selected.delete(r.id));
+        renderTable();
+        setSelected(selected.size);
+      });
+    }
+    // 单行操作
     $$("[data-qr-disable]", listBox).forEach((btn) =>
       btn.addEventListener("click", () => setStatus(Number(btn.dataset.qrDisable), "disabled"))
     );
@@ -2073,6 +2148,43 @@ function setupAdminQrCodes(token, mount) {
     );
     $$("[data-qr-del]", listBox).forEach((btn) =>
       btn.addEventListener("click", () => removeOne(Number(btn.dataset.qrDel)))
+    );
+    $$("[data-qr-copy]", listBox).forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const id = Number(btn.dataset.qrCopy);
+        const row = state.rows.find((r) => r.id === id);
+        if (!row) return;
+        copyText(row.codeToken);
+        toast("已复制 token", "ok");
+      })
+    );
+  };
+
+  const renderPagination = () => {
+    if (state.pages <= 1) {
+      paginationEl.innerHTML = "";
+      return;
+    }
+    const p = state.page;
+    const tp = state.pages;
+    const btn = (label, page, opts = {}) => {
+      const dis = opts.disabled ? "disabled" : "";
+      const act = opts.active ? "active" : "";
+      return `<button type="button" class="qr-page-btn ${act}" data-qr-page="${page}" ${dis}>${label}</button>`;
+    };
+    const pages = [];
+    pages.push(btn("‹ 上一页", Math.max(1, p - 1), { disabled: p <= 1 }));
+    for (let i = 1; i <= tp; i++) {
+      if (i === 1 || i === tp || Math.abs(i - p) <= 2) pages.push(btn(String(i), i, { active: i === p }));
+      else if (i === 2 || i === tp - 1) pages.push(`<span class="qr-page-ellipsis">…</span>`);
+    }
+    pages.push(btn("下一页 ›", Math.min(tp, p + 1), { disabled: p >= tp }));
+    paginationEl.innerHTML = pages.join("");
+    $$("[data-qr-page]", paginationEl).forEach((b) =>
+      b.addEventListener("click", () => {
+        state.page = Math.max(1, Math.min(state.pages, Number(b.dataset.qrPage)));
+        reload();
+      })
     );
   };
 
@@ -2087,14 +2199,21 @@ function setupAdminQrCodes(token, mount) {
 
   async function reload() {
     listBox.innerHTML = `<p class="muted">正在加载…</p>`;
+    paginationEl.innerHTML = "";
+    pageMeta.textContent = "加载中…";
     try {
-      const r = await api.adminListQrCodes(token, { ...filter, limit: 200 });
-      listBox.__codes = r.codes || [];
-      listBox.dataset.loaded = "1";
-      selected.clear();
-      renderStats(r.stats || {});
+      const r = await api.adminListQrCodes(token, { ...filter, limit: PAGE_SIZE, offset: (state.page - 1) * PAGE_SIZE });
+      state.rows = r.codes || [];
+      state.total = r.total || state.rows.length;
+      state.pages = Math.max(1, Math.ceil(state.total / PAGE_SIZE));
+      setTabCounts(r.stats || {});
       renderBatchOptions(r.batches || []);
-      renderList();
+      renderTable();
+      renderPagination();
+      const from = (state.page - 1) * PAGE_SIZE + 1;
+      const to = (state.page - 1) * PAGE_SIZE + state.rows.length;
+      pageMeta.textContent = state.total ? `显示 ${from}-${to} / 共 ${state.total} 条` : `共 0 条`;
+      setSelected(selected.size);
     } catch (err) {
       if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
       listBox.innerHTML = `<p class="muted">加载失败：${escapeHtml(err.message || "")}</p>`;
@@ -2109,29 +2228,129 @@ function setupAdminQrCodes(token, mount) {
     } catch (err) { toast(err.message || "操作失败", "err"); }
   }
 
-  async function removeOne(id) {
-    try {
-      await api.adminDeleteQrCode(token, id);
-      toast("已删除", "ok");
-      await reload();
-    } catch (err) { toast(err.message || "删除失败", "err"); }
+  async function setBulkStatus(action) {
+    const ids = [...selected];
+    if (!ids.length) return toast("请先勾选要操作的二维码", "err");
+    const labelMap = { delete: "删除", disable: "停用", enable: "启用" };
+    openModal({
+      title: `${labelMap[action]} ${ids.length} 个二维码？`,
+      body: action === "delete"
+        ? "仅未绑定 / 已停用的码会被删除，已绑定的会自动跳过。"
+        : "已绑定的二维码会被自动跳过，无法改状态。",
+      confirmText: `确认${labelMap[action]}`,
+      danger: action !== "enable",
+      onConfirm: async () => {
+        try {
+          const r = await api.adminBulkQrCodes(token, action, ids);
+          toast(r.message || "已处理", "ok");
+          selected.clear();
+          state.page = 1;
+          await reload();
+        } catch (err) { toast(err.message || "操作失败", "err"); }
+      },
+    });
   }
+
+  async function removeOne(id) {
+    openModal({
+      title: "删除该二维码？",
+      body: "未绑定 / 已停用的码会被删除，已绑定码不会执行此操作。",
+      confirmText: "确认删除",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.adminDeleteQrCode(token, id);
+          selected.delete(id);
+          toast("已删除", "ok");
+          await reload();
+        } catch (err) { toast(err.message || "删除失败", "err"); }
+      },
+    });
+  }
+
+  // 状态 tab 切换
+  if (tabsEl) {
+    tabsEl.addEventListener("click", (e) => {
+      const tab = e.target.closest(".qr-status-tab");
+      if (!tab) return;
+      $$(".qr-status-tab", tabsEl).forEach((b) => b.classList.toggle("active", b === tab));
+      filter.status = tab.dataset.status || "";
+      state.page = 1;
+      reload();
+    });
+  }
+  // 工具栏全选
+  if (selectAllEl) {
+    selectAllEl.addEventListener("change", () => {
+      const visibleIds = state.rows.map((r) => r.id);
+      if (selectAllEl.checked) visibleIds.forEach((id) => selected.add(id));
+      else visibleIds.forEach((id) => selected.delete(id));
+      renderTable();
+      setSelected(selected.size);
+    });
+  }
+
+  // 批量按钮
+  $("#qrBulkDelete", mount)?.addEventListener("click", () => setBulkStatus("delete"));
+  $("#qrBulkDisable", mount)?.addEventListener("click", () => setBulkStatus("disable"));
+  $("#qrBulkEnable", mount)?.addEventListener("click", () => setBulkStatus("enable"));
+  $("#qrExport", mount)?.addEventListener("click", () => {
+    const rows = [["ID", "状态", "批次", "令牌", "扫码链接", "绑定车牌", "备注", "创建时间"]];
+    state.rows.forEach((c) =>
+      rows.push([
+        String(c.id),
+        QR_STATUS_LABEL[c.status] || c.status,
+        c.batchNo || "",
+        c.codeToken,
+        buildQrUrl(c.codeToken),
+        c.maskedPlate || "",
+        c.note || "",
+        c.createdAt || "",
+      ])
+    );
+    const csv = rows
+      .map((r) => r.map((x) => (/[",\n]/.test(String(x)) ? `"${String(x).replaceAll('"', '""')}"` : x)).join(","))
+      .join("\r\n");
+    downloadFile(`move-car-qr-${filter.status || "all"}-page${state.page}.csv`, "\ufeff" + csv);
+  });
+
+  $("#qrSearchBtn", mount)?.addEventListener("click", () => {
+    filter.status = $$(".qr-status-tab.active", tabsEl)[0]?.dataset.status || "";
+    filter.batch = $("#qrBatchFilter", mount).value;
+    filter.q = $("#qrSearch", mount).value.trim();
+    state.page = 1;
+    reload();
+  });
+  $("#qrResetBtn", mount)?.addEventListener("click", () => {
+    $("#qrBatchFilter", mount).value = "";
+    $("#qrSearch", mount).value = "";
+    $$(".qr-status-tab", tabsEl).forEach((b, i) => b.classList.toggle("active", i === 0));
+    filter.status = ""; filter.batch = ""; filter.q = "";
+    state.page = 1;
+    reload();
+  });
+  $("#qrSearch", mount)?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("#qrSearchBtn", mount).click(); }
+  });
 
   // 批量生成
   $("#qrBatchForm", mount)?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const count = Number($("#qrCount", mount).value) || 0;
     if (count < 1 || count > 200) return toast("生成数量需在 1-200 之间", "err");
-    showResult(batchResult, "正在生成…");
+    showResult($("#qrBatchResult", mount), "正在生成…");
     try {
       const r = await api.adminBatchQrCodes(token, {
         count,
         batchNo: $("#qrBatchNo", mount).value.trim(),
         note: $("#qrNote", mount).value.trim(),
       });
-      lastBatch = (r.codes || []).map((t) => ({ codeToken: t }));
+      const wrap = $("#qrBatchPreviewWrap", mount);
+      const gridEl = $("#qrBatchGrid", mount);
+      const previewMeta = $("#qrBatchPreviewMeta", mount);
+      lastBatch = (r.tokens || r.codes || []).map((t) => ({ codeToken: t }));
       lastBatchNo = r.batchNo || "";
-      previewWrap.classList.remove("hidden");
+      wrap.classList.remove("hidden");
       previewMeta.textContent = `批次 ${lastBatchNo} · 共 ${lastBatch.length} 个`;
       gridEl.innerHTML = lastBatch
         .map(
@@ -2141,12 +2360,13 @@ function setupAdminQrCodes(token, mount) {
           </div>`
         )
         .join("");
-      showResult(batchResult, `✅ ${escapeHtml(r.message || "已生成")} 可点击下方「打印本批」直接打印贴纸。`);
+      showResult($("#qrBatchResult", mount), `✅ ${escapeHtml(r.message || "已生成")} 可点击下方「打印本批」直接打印贴纸。`);
       toast("二维码已生成", "ok");
+      state.page = 1;
       await reload();
     } catch (err) {
       if (err.status === 401) { clearAdminToken(); renderAdminLogin(); return; }
-      showResult(batchResult, escapeHtml(err.message || "生成失败"), true);
+      showResult($("#qrBatchResult", mount), escapeHtml(err.message || "生成失败"), true);
     }
   });
 
@@ -2161,40 +2381,6 @@ function setupAdminQrCodes(token, mount) {
     lastBatch.forEach((c, i) => rows.push([String(i + 1), lastBatchNo, buildQrUrl(c.codeToken)]));
     const csv = rows.map((r) => r.map((x) => (/[",\n]/.test(String(x)) ? `"${String(x).replaceAll('"', '""')}"` : x)).join(",")).join("\r\n");
     downloadFile(`move-car-qr-${lastBatchNo || "batch"}.csv`, "\ufeff" + csv);
-  });
-
-  $("#qrSearchBtn", mount)?.addEventListener("click", () => {
-    filter.status = $("#qrStatus", mount).value;
-    filter.batch = $("#qrBatchFilter", mount).value;
-    filter.q = $("#qrSearch", mount).value.trim();
-    reload();
-  });
-  $("#qrResetBtn", mount)?.addEventListener("click", () => {
-    $("#qrStatus", mount).value = "";
-    $("#qrBatchFilter", mount).value = "";
-    $("#qrSearch", mount).value = "";
-    filter.status = ""; filter.batch = ""; filter.q = "";
-    reload();
-  });
-  $("#qrSearch", mount)?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); $("#qrSearchBtn", mount).click(); }
-  });
-  $("#qrDeleteSel", mount)?.addEventListener("click", () => {
-    const ids = [...selected];
-    if (!ids.length) return toast("请先勾选要删除的二维码", "err");
-    openModal({
-      title: `删除所选 ${ids.length} 个二维码？`,
-      body: "仅未绑定 / 已停用的码会被删除，已绑定的会自动跳过。删除后这些码将失效。",
-      confirmText: "确认删除",
-      danger: true,
-      onConfirm: async () => {
-        try {
-          const r = await api.adminBulkDeleteQrCodes(token, ids);
-          toast(r.message || "已删除", "ok");
-          await reload();
-        } catch (err) { toast(err.message || "删除失败", "err"); }
-      },
-    });
   });
 
   reload();

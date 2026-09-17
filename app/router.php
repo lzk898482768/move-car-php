@@ -63,6 +63,7 @@ function route_api(string $method, string $path): void
 
         // 预生成二维码
         ['POST', '#^/api/admin/qr-codes/batch$#', 'api_admin_qr_batch', true],
+        ['POST', '#^/api/admin/qr-codes/bulk$#', 'api_admin_qr_bulk', true],
         ['POST', '#^/api/admin/qr-codes/bulk-delete$#', 'api_admin_qr_bulk_delete', true],
         ['GET', '#^/api/admin/qr-codes$#', 'api_admin_qr_list', true],
         ['PATCH', '#^/api/admin/qr-codes/(\d+)$#', 'api_admin_qr_update', true],

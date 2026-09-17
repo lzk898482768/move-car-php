@@ -437,6 +437,45 @@ function api_admin_qr_bulk_delete(): void
     json_message("已删除 {$n} 个未绑定二维码（已绑定的已自动跳过）。");
 }
 
+/**
+ * 通用批量操作：action=delete | disable | enable
+ * - delete: 已绑定的会跳过（提示告知）
+ * - disable/enable: 同样会自动跳过已绑定的（状态不可改）
+ */
+function api_admin_qr_bulk(): void
+{
+    $in = request_json();
+    $action = trim((string)($in['action'] ?? ''));
+    $ids = array_values(array_filter(array_map('intval', (array)($in['ids'] ?? []))));
+    if (!$ids) json_error('empty_selection', '请先选择要操作的二维码。', 400);
+    if (!in_array($action, ['delete', 'disable', 'enable'], true)) {
+        json_error('invalid_action', '不支持的操作类型：' . $action, 400);
+    }
+    $ph = DB::placeholders(count($ids));
+
+    if ($action === 'delete') {
+        $n = DB::exec("DELETE FROM qr_codes WHERE id IN ($ph) AND status <> 'bound'", $ids);
+        json_message("已删除 {$n} 个未绑定二维码（已绑定的已自动跳过）。");
+    }
+
+    $target = $action === 'disable' ? 'disabled' : 'unbound';
+    $verb = $action === 'disable' ? '停用' : '启用';
+    // 锁定写入：批量更新且排除已绑定
+    DB::tx(function () use ($ids, $ph, $target) {
+        $n = DB::exec("UPDATE qr_codes SET status = ?, updated_at = ? WHERE id IN ($ph) AND status <> 'bound'", [$target, db_now(), ...$ids]);
+        return $n;
+    });
+    // tx 闭包没有返回值，需要重新查询来获取受影响行数
+    $n = (int)DB::val(
+        "SELECT COUNT(*) FROM qr_codes WHERE id IN ($ph) AND status = ?",
+        array_merge($ids, [$target])
+    );
+    // 同时统计已绑定的跳过数
+    $skipped = count($ids) - $n;
+    $extra = $skipped > 0 ? "（已绑定 {$skipped} 个已自动跳过）" : '';
+    json_message("已{$verb} {$n} 个二维码{$extra}。");
+}
+
 /* ---------------- 拨号日志 ---------------- */
 
 function build_call_log_filter(): array

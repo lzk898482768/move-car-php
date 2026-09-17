@@ -1,6 +1,8 @@
 #!/bin/bash
 # 本地冒烟：安装 → 创建 → 访客 → 二维码 → 车主 → 日志 → 管理端
 B=${MC_BASE:-http://127.0.0.1:8099}
+# 切到脚本所在目录，避免 server/临时文件路径错乱
+cd "$(dirname "$0")"
 pass(){ echo "  [OK] $1"; }
 fail(){ echo "  [FAIL] $1 -> $2"; }
 
@@ -55,6 +57,41 @@ echo "=== 8. 批量生成二维码 ==="
 QB=$(curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOK" -d '{"count":3,"batchNo":"B1"}' $B/api/admin/qr-codes/batch)
 CT=$(node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log((JSON.parse(s).tokens||[])[0]||'')}catch(e){console.log('')}})" <<< "$QB")
 [ -n "$CT" ] && pass "批量生成 3 个（首个 ${CT:0:12}...）" || fail "批量生成" "$QB"
+
+echo "=== 8.5 后台列表 + 分页 + 状态 tab 总数 ==="
+LIST=$(curl -s -H "Authorization: Bearer $TOK" "$B/api/admin/qr-codes?limit=50&offset=0")
+echo "$LIST" | grep -q '"total"' && pass "分页 total 字段" || fail "list total" "$LIST"
+TOTAL=$(echo "$LIST" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log(j.total||0)}catch(e){console.log(0)}})")
+echo "$LIST" | grep -q '"stats"' && pass "stats 摘要" || fail "list stats" "$LIST"
+# 取前 2 个 unbound id
+IDS=$(echo "$LIST" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log((j.codes||[]).filter(c=>c.status==='unbound').slice(0,2).map(c=>c.id).join(','))}catch(e){console.log('')}})")
+[ -n "$IDS" ] && pass "抓到未绑定 id（${IDS}）" || fail "list ids" "$LIST"
+
+echo "=== 8.6 批量启 / 停 / 删（通用 bulk 端点） ==="
+# 把列表里第一个 unbound 改为 disabled
+FIRST_ID=$(echo "$IDS" | cut -d, -f1)
+[ -n "$FIRST_ID" ] && \
+  curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOK" \
+    -d "{\"action\":\"disable\",\"ids\":[$FIRST_ID]}" $B/api/admin/qr-codes/bulk | grep -q "已停用 1" && \
+    pass "bulk disable" || fail "bulk disable" "$FIRST_ID"
+
+# 把列表里第一个 unbound 改为 enabled（即另一个 id）
+SECOND_ID=$(echo "$IDS" | cut -d, -f2)
+[ -n "$SECOND_ID" ] && \
+  curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOK" \
+    -d "{\"action\":\"enable\",\"ids\":[$SECOND_ID]}" $B/api/admin/qr-codes/bulk | grep -q "已启用 1" && \
+    pass "bulk enable" || fail "bulk enable" "$SECOND_ID"
+
+# 把这两个一起删掉（都是 unbound/unbound）
+[ -n "$FIRST_ID" ] && [ -n "$SECOND_ID" ] && \
+  curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOK" \
+    -d "{\"action\":\"delete\",\"ids\":[$FIRST_ID,$SECOND_ID]}" $B/api/admin/qr-codes/bulk | grep -q "已删除 2" && \
+    pass "bulk delete (skip bound)" || fail "bulk delete" "first=$FIRST_ID second=$SECOND_ID"
+
+# 错误处理：action=foo
+[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOK" \
+  -d "{\"action\":\"foo\",\"ids\":[]}" $B/api/admin/qr-codes/bulk)" = "400" ] && \
+    pass "bulk 拒绝非法 action" || fail "bulk bad action" "code"
 
 echo "=== 9. 扫码解析（未绑定）==="
 QR=$(curl -s $B/api/qr/$CT)
